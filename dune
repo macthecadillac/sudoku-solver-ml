@@ -1,0 +1,7 @@
+(executables
+  (names solver_v1)
+  (modules solver_v1))
+
+(executables
+  (names solver_v2)
+  (modules solver_v2))
