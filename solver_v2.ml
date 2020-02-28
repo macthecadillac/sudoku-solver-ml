@@ -11,73 +11,111 @@ module IMap = Map.Make (OrderedInt)
 module IntMap = struct
   include IMap
 
-  let fold_while f m acc =
+  let fold_while f acc m =
     let rec aux seq_thunk accum =
       match seq_thunk () with
       | Seq.Nil -> accum
       | Seq.Cons ((key, a), seq_thunk') ->
-          match f key a accum with
+          match f accum key a with
           | accum', `Stop -> accum'
           | accum', `Continue -> aux seq_thunk' accum'
     in aux (to_seq m) acc
 end
 
+let (let*) = Option.bind
+
 (* sector functions *)
-let col x = x mod 9
-let row x = x / 9
-let cell x = row x / 3 + col x / 3 * 3
+let col_of x = x mod 9
+let row_of x = x / 9
+let sector_of x = row_of x / 3 + col_of x / 3 * 3
 
 let print_solution = function
   | `Deadend -> print_endline " Solution not found."
   | `Solution solution ->
       IntMap.iter
-      (fun i x ->
-        Printf.printf "%i " x;
-        if col i = 8 then print_newline ())
+      (fun i -> function
+        | `Candidates _ -> assert false
+        | `Filled x ->
+            Printf.printf "%i " x;
+            if col_of i = 8 then print_newline ())
       solution
+
+let prune i x mtrx =
+  let row, col = (row_of i), (col_of i) in
+  let row_cells = List.init 9 (fun x -> row * 9 + x) in
+  let col_cells = List.init 9 (fun x -> 9 * x + col) in
+  let sector_anchor = (i / 9 / 3) * 27 + (i mod 9 / 3) * 3 in
+  let sector_cells = List.init 9 (fun x -> sector_anchor + (x / 3) * 9 + x mod 3) in
+  let remove_elt idx acc =
+    IntMap.update idx
+    (fun elt ->
+      let* cell = elt in
+      match cell with
+      | `Filled _ -> elt
+      | `Candidates set -> Some (`Candidates (IntSet.remove x set)))
+    acc in
+  List.fold_right remove_elt row_cells mtrx
+      |> List.fold_right remove_elt col_cells
+      |> List.fold_right remove_elt sector_cells
+
+let fill_mtrx i x mtrx =
+  IntMap.update i (fun _ -> Some (`Filled x)) mtrx
+      |> prune i x
 
 let used_numbers secfn mtrx =
   IntMap.fold
-  (fun i x acc ->
+  (fun i cell acc ->
     IntMap.update (secfn i)
     (function
-      | None -> Some (IntSet.add x IntSet.empty)
-      | Some set -> Some (if x <> 0 then IntSet.add x set else set))
+      | None -> (match cell with
+          | `Filled x -> Some (IntSet.add x IntSet.empty)
+          | _ -> Some IntSet.empty)
+      | Some set -> match cell with
+          | `Filled x -> Some (IntSet.add x set)
+          | _ -> Some set)
     acc)
   mtrx
   IntMap.empty
 
-let lowest_candidate_count mtrx =
-  let secfn = [row; col; cell] in
+let analyze mtrx =
+  let secfn = [row_of; col_of; sector_of] in
   let used = List.map (fun f -> used_numbers f mtrx) secfn in
-  let available_numbers_of_cell i mtrx =
+  let available_numbers_of_cell i =
     List.map2 (fun f u -> IntMap.find (f i) u) secfn used
-    |> List.fold_left IntSet.union IntSet.empty
-    |> IntSet.diff (IntSet.of_list [1; 2; 3; 4; 5; 6; 7; 8; 9])
-    |> IntSet.elements in
-  IntMap.fold_while
-  (fun i x acc ->
-    let thk () =
-      let avail = available_numbers_of_cell i mtrx in
-      List.length avail, avail in
-    match acc with
-    | `NoCandidate -> assert false
-    | `Uninitialized when x <> 0 -> `Uninitialized, `Continue
-    | `Uninitialized -> let cnt, av = thk () in `LowestCount (i, cnt, av), `Continue
-    | `LowestCount (_, cnt', _) ->
-        if x <> 0 then acc, `Continue
-        else let cnt, av = thk () in
-        if cnt = 0 then `NoCandidate, `Stop
-        else if cnt = 1 then `LowestCount (i, cnt, av), `Stop
-        else if cnt <= cnt' then `LowestCount (i, cnt, av), `Continue
-        else acc, `Continue)
+      |> List.fold_left IntSet.union IntSet.empty
+      |> IntSet.diff (IntSet.of_list [1; 2; 3; 4; 5; 6; 7; 8; 9]) in
+  IntMap.mapi
+  (fun i cell ->
+    match cell with
+    | `Filled _ -> cell
+    | `Candidates _ -> `Candidates (available_numbers_of_cell i))
   mtrx
+
+let lowest_candidate_count =
+  IntMap.fold_while
+  (fun acc i cell ->
+    match cell with
+    | `Filled _ -> acc, `Continue
+    | `Candidates candidates ->
+        match acc with
+        | `NoCandidate -> assert false
+        | `Uninitialized ->
+            let cnt = IntSet.cardinal candidates in
+            `LowestCount (i, cnt, candidates), `Continue
+        | `LowestCount (_, cnt', _) ->
+            let cnt = IntSet.cardinal candidates in
+            if cnt = 0 then `NoCandidate, `Stop
+            else if cnt = 1 then `LowestCount (i, cnt, candidates), `Stop
+            else if cnt <= cnt' then `LowestCount (i, cnt, candidates), `Continue
+            else acc, `Continue)
   `Uninitialized
 
-let rec plug_n_chug i mtrx = function
-  | [] -> `Deadend
-  | x::next_candidates ->
-      match solve (IntMap.update i (fun _ -> Some x) mtrx) with
+let rec plug_n_chug i mtrx candidates =
+  match IntSet.min_elt_opt candidates with
+  | None -> `Deadend
+  | Some x ->
+      let next_candidates = IntSet.remove x candidates in
+      match solve (fill_mtrx i x mtrx) with
       | `Deadend -> plug_n_chug i mtrx next_candidates
       | s -> s
 
@@ -87,12 +125,19 @@ and solve mtrx =
   | `Uninitialized -> `Solution mtrx
   | `LowestCount (i, _, candidates) -> plug_n_chug i mtrx candidates
 
+let parse str =
+  let convert i x =
+    if x = "0" then i, `Candidates IntSet.empty
+    else i, `Filled (int_of_string x) in
+  List.map (String.split_on_char ' ') str
+  |> List.concat
+  |> List.mapi convert
+  |> List.to_seq
+  |> IntMap.of_seq
+
 let () =
   List.init 9 (fun _ -> input_line stdin)
-    |> List.map (String.split_on_char ' ')
-    |> List.concat
-    |> List.mapi (fun i x -> i, int_of_string x)
-    |> List.to_seq
-    |> IntMap.of_seq
+    |> parse
+    |> analyze
     |> solve
     |> print_solution
