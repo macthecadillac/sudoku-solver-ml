@@ -1,20 +1,26 @@
 (* A solver that solves by prioritizing cells with the least number of
  * candidates *)
 
-(* TODO:
- * Optimizations:
- * 1. Automatically fill in cells with only one candidate instead of folding
- *    over the entire matrix every pass
- * 2. Try fold and exit once a cell with only two candidates is found in
- *    least_candidate_count
- *)
-
 module OrderedInt = struct
   type t = int
   let compare = (-)
 end
 module IntSet = Set.Make (OrderedInt)
-module IntMap = Map.Make (OrderedInt)
+module IMap = Map.Make (OrderedInt)
+
+module IntMap = struct
+  include IMap
+
+  let fold_while f m acc =
+    let rec aux seq_thunk accum =
+      match seq_thunk () with
+      | Seq.Nil -> accum
+      | Seq.Cons ((key, a), seq_thunk') ->
+          match f key a accum with
+          | accum', `Stop -> accum'
+          | accum', `Continue -> aux seq_thunk' accum'
+    in aux (to_seq m) acc
+end
 
 (* sector functions *)
 let col x = x mod 9
@@ -41,28 +47,30 @@ let used_numbers secfn mtrx =
   mtrx
   IntMap.empty
 
-let available_numbers_of_cell i mtrx =
-  List.to_seq [row; col; cell]
-    |> Seq.map (fun f -> IntMap.find (f i) (used_numbers f mtrx))
-    |> Seq.fold_left IntSet.union IntSet.empty
+let lowest_candidate_count mtrx =
+  let secfn = [row; col; cell] in
+  let used = List.map (fun f -> used_numbers f mtrx) secfn in
+  let available_numbers_of_cell i mtrx =
+    List.map2 (fun f u -> IntMap.find (f i) u) secfn used
+    |> List.fold_left IntSet.union IntSet.empty
     |> IntSet.diff (IntSet.of_list [1; 2; 3; 4; 5; 6; 7; 8; 9])
-    |> IntSet.elements
-
-let least_candidate_count mtrx =
-  IntMap.fold
+    |> IntSet.elements in
+  IntMap.fold_while
   (fun i x acc ->
-    let cnt, av =
+    let thk () =
       let avail = available_numbers_of_cell i mtrx in
       List.length avail, avail in
     match acc with
-    | `NoCandidate -> `NoCandidate
-    | `Uninitialized when x <> 0 -> `Uninitialized
-    | `Uninitialized -> `LowestCount (i, cnt, av)
+    | `NoCandidate -> assert false
+    | `Uninitialized when x <> 0 -> `Uninitialized, `Continue
+    | `Uninitialized -> let cnt, av = thk () in `LowestCount (i, cnt, av), `Continue
     | `LowestCount (_, cnt', _) ->
-        if x <> 0 then acc
-        else if cnt = 0 && x = 0 then `NoCandidate
-        else if cnt <= cnt' then `LowestCount (i, cnt, av)
-        else acc)
+        if x <> 0 then acc, `Continue
+        else let cnt, av = thk () in
+        if cnt = 0 then `NoCandidate, `Stop
+        else if cnt = 1 then `LowestCount (i, cnt, av), `Stop
+        else if cnt <= cnt' then `LowestCount (i, cnt, av), `Continue
+        else acc, `Continue)
   mtrx
   `Uninitialized
 
@@ -74,7 +82,7 @@ let rec plug_n_chug i mtrx = function
       | s -> s
 
 and solve mtrx =
-  match least_candidate_count mtrx with
+  match lowest_candidate_count mtrx with
   | `NoCandidate -> `Deadend
   | `Uninitialized -> `Solution mtrx
   | `LowestCount (i, _, candidates) -> plug_n_chug i mtrx candidates
