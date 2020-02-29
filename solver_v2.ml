@@ -23,6 +23,7 @@ module IntMap = struct
 end
 
 let (let*) = Option.bind
+let (>>-) f g = fun x -> g (f x)
 
 (* sector functions *)
 let col_of x = x mod 9
@@ -126,18 +127,13 @@ and solve mtrx =
   | `LowestCount (i, _, candidates) -> plug_n_chug i mtrx candidates
 
 let parse str =
-  let convert i x =
-    if x = "0" then i, `Candidates IntSet.empty
-    else i, `Filled (int_of_string x) in
-  List.map (String.split_on_char ' ') str
-  |> List.concat
-  |> List.mapi convert
-  |> List.to_seq
-  |> IntMap.of_seq
+  let convert (i, x) =
+    if x = '.' then i, `Candidates IntSet.empty
+    else i, `Filled (Char.escaped x |> int_of_string) in
+  (String.to_seqi >>- Seq.map convert >>- IntMap.of_seq) str
 
 let () =
-  List.init 9 (fun _ -> input_line stdin)
-    |> parse
-    |> analyze
-    |> solve
-    |> print_solution
+  let rec line_stream () =
+    try Seq.Cons (input_line stdin, line_stream)
+    with End_of_file -> Seq.Nil in
+  Seq.iter (parse >>- analyze >>- solve >>- print_solution) line_stream

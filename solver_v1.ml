@@ -5,6 +5,8 @@ module IntSet = Set.Make (struct
   let compare = (-)
 end)
 
+let (>>-) f g = fun x -> g (f x)
+
 let print_solution = function
   | `Deadend -> print_endline " Solution not found."
   | `Solution s ->
@@ -20,7 +22,6 @@ let used indxf i =
   IntSet.empty
 
 let unused_numbers i mtrx =
-  (* (S ∖ rowS) ∩ [(S ∖ colS) ∩ (S ∖ sqS)] = S ∖ [rowS ∪ (colS ∪ sqS)] *)
   IntSet.union (used (fun x -> x / 9) i mtrx) (used (fun x -> x mod 9) i mtrx)
     |> IntSet.union (used (fun x -> (x / 9) / 3 + 3 * (x mod 9 / 3)) i mtrx)
     |> IntSet.diff (IntSet.of_list [1; 2; 3; 4; 5; 6; 7; 8; 9])
@@ -40,10 +41,14 @@ and search i l tl = function
       | `Deadend -> search i l tl tl'
       | s -> s
 
+let parse str =
+  let convert (i, x) =
+    if x = '.' then i, 0
+    else i, (Char.escaped x |> int_of_string) in
+  (String.to_seqi >>- Seq.map convert >>- List.of_seq) str
+
 let () =
-  List.init 9 (fun _ -> input_line stdin)
-    |> List.map (String.split_on_char ' ')
-    |> List.concat
-    |> List.mapi (fun i x -> i, int_of_string x)
-    |> solve []
-    |> print_solution
+  let rec line_stream () =
+    try Seq.Cons (input_line stdin, line_stream)
+    with End_of_file -> Seq.Nil in
+  Seq.iter (parse >>- solve [] >>- print_solution) line_stream

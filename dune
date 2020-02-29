@@ -1,7 +1,7 @@
 (executables
-  (names solver_v1 solver_v2)
-  (public_names sudoku_solver_v1 sudoku_solver_v2)
-  (modules solver_v1 solver_v2)
+  (names solver_v1 solver_v2 print)
+  (public_names sudoku_solver_v1 sudoku_solver_v2 print)
+  (modules solver_v1 solver_v2 print)
   (package sudoku-solver))
 
 (env
