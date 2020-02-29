@@ -23,7 +23,7 @@ module IntMap = struct
 end
 
 let (let*) = Option.bind
-let (>>-) f g = fun x -> g (f x)
+let (>>) f g = fun x -> g (f x)
 
 (* sector functions *)
 let col_of x = x mod 9
@@ -59,9 +59,7 @@ let prune i x mtrx =
       |> List.fold_right remove_elt col_cells
       |> List.fold_right remove_elt sector_cells
 
-let fill_mtrx i x mtrx =
-  IntMap.update i (fun _ -> Some (`Filled x)) mtrx
-      |> prune i x
+let fill_mtrx i x = IntMap.update i (fun _ -> Some (`Filled x)) >> prune i x
 
 let used_numbers secfn mtrx =
   IntMap.fold
@@ -130,10 +128,10 @@ let parse str =
   let convert (i, x) =
     if x = '.' then i, `Candidates IntSet.empty
     else i, `Filled (Char.escaped x |> int_of_string) in
-  (String.to_seqi >>- Seq.map convert >>- IntMap.of_seq) str
+  (String.to_seqi >> Seq.map convert >> IntMap.of_seq) str
 
 let () =
   let rec line_stream () =
     try Seq.Cons (input_line stdin, line_stream)
     with End_of_file -> Seq.Nil in
-  Seq.iter (parse >>- analyze >>- solve >>- print_solution) line_stream
+  Seq.iter (parse >> analyze >> solve >> print_solution) line_stream

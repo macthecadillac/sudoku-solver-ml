@@ -5,7 +5,7 @@ module IntSet = Set.Make (struct
   let compare = (-)
 end)
 
-let (>>-) f g = fun x -> g (f x)
+let (>>) f g = fun x -> g (f x)
 
 let print_solution = function
   | `Deadend -> print_endline " Solution not found."
@@ -45,10 +45,10 @@ let parse str =
   let convert (i, x) =
     if x = '.' then i, 0
     else i, (Char.escaped x |> int_of_string) in
-  (String.to_seqi >>- Seq.map convert >>- List.of_seq) str
+  (String.to_seqi >> Seq.map convert >> List.of_seq) str
 
 let () =
   let rec line_stream () =
     try Seq.Cons (input_line stdin, line_stream)
     with End_of_file -> Seq.Nil in
-  Seq.iter (parse >>- solve [] >>- print_solution) line_stream
+  Seq.iter (parse >> solve [] >> print_solution) line_stream
