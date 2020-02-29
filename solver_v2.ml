@@ -127,7 +127,7 @@ and solve mtrx =
 let parse str =
   let convert (i, x) =
     if x = '.' then i, `Candidates IntSet.empty
-    else i, `Filled (Char.escaped x |> int_of_string) in
+    else i, `Filled (int_of_string @@ Char.escaped x) in
   (String.to_seqi >> Seq.map convert >> IntMap.of_seq) str
 
 let () =

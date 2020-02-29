@@ -44,7 +44,7 @@ and search i l tl = function
 let parse str =
   let convert (i, x) =
     if x = '.' then i, 0
-    else i, (Char.escaped x |> int_of_string) in
+    else i, (int_of_string @@ Char.escaped x) in
   (String.to_seqi >> Seq.map convert >> List.of_seq) str
 
 let () =
