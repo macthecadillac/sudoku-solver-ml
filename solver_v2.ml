@@ -61,34 +61,13 @@ let prune i x mtrx =
 
 let fill_mtrx i x = IntMap.update i (fun _ -> Some (`Filled x)) >> prune i x
 
-let used_numbers secfn mtrx =
+let initialize mtrx =
   IntMap.fold
-  (fun i cell acc ->
-    IntMap.update (secfn i)
-    (function
-      | None -> (match cell with
-          | `Filled x -> Some (IntSet.add x IntSet.empty)
-          | _ -> Some IntSet.empty)
-      | Some set -> match cell with
-          | `Filled x -> Some (IntSet.add x set)
-          | _ -> Some set)
-    acc)
-  mtrx
-  IntMap.empty
-
-let analyze mtrx =
-  let secfn = [row_of; col_of; sector_of] in
-  let used = List.map (fun f -> used_numbers f mtrx) secfn in
-  let available_numbers_of_cell i =
-    List.map2 (fun f u -> IntMap.find (f i) u) secfn used
-      |> List.fold_left IntSet.union IntSet.empty
-      |> IntSet.diff (IntSet.of_list [1; 2; 3; 4; 5; 6; 7; 8; 9]) in
-  IntMap.mapi
-  (fun i cell ->
+  (fun indx cell acc ->
     match cell with
-    | `Filled _ -> cell
-    | `Candidates _ -> `Candidates (available_numbers_of_cell i))
-  mtrx
+    | `Filled n -> prune indx n acc
+    | _ -> acc)
+  mtrx mtrx
 
 let lowest_candidate_count =
   IntMap.fold_while
@@ -126,7 +105,7 @@ and solve mtrx =
 
 let parse str =
   let convert (i, x) =
-    if x = '.' then i, `Candidates IntSet.empty
+    if x = '.' then i, `Candidates (IntSet.of_list (List.init 9 (( + ) 1)))
     else i, `Filled (int_of_string @@ Char.escaped x) in
   (String.to_seqi >> Seq.map convert >> IntMap.of_seq) str
 
@@ -134,4 +113,4 @@ let () =
   let rec line_stream () =
     try Seq.Cons (input_line stdin, line_stream)
     with End_of_file -> Seq.Nil in
-  Seq.iter (parse >> analyze >> solve >> print_solution) line_stream
+  Seq.iter (parse >> initialize >> solve >> print_solution) line_stream
