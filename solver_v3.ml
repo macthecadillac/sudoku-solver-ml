@@ -50,16 +50,15 @@ let print_solution = function
       solution
 
 let filter_filled_cells mtrx =
-  List.fold_left
-  (fun set_map x ->
-    match IntMap.find x mtrx with
-    | `Filled _ -> set_map
-    | `Candidates c -> IntMap.add x c set_map)
-  IntMap.empty
+  List.filter_map
+  (fun i ->
+    match IntMap.find i mtrx with
+    | `Filled _ -> None
+    | `Candidates c -> Some (i, c))
 
 let list_exclusives =
-  IntMap.fold_left
-  (fun acc indx elt_set ->
+  List.fold_left
+  (fun acc (indx, elt_set) ->
     IntSet.fold
     (fun elt acc' ->
       IntMap.update elt
@@ -86,24 +85,15 @@ let prune_inds x mtrx inds =
         | `Candidates set -> Some (`Candidates (IntSet.remove x set))) in
   List.fold_right aux inds mtrx
 
-let prune_exclusives_in_sector mtrx inds =
-  let inds_set = IntSet.of_list inds in
+let prune_exclusives_in_sector inds mtrx =
   filter_filled_cells mtrx inds
     |> list_exclusives
     |> Seq.fold_left
        (fun acc (indx_set, elt_set) ->
          IntSet.(fold
-         (fun i acc' ->
-           IntMap.update i (fun _ -> Some (`Candidates elt_set)) acc')
-         indx_set acc)
-         |> IntSet.fold
-            (fun i acc ->
-              match IntMap.find i acc with
-              | `Filled _ -> acc
-              | `Candidates set ->
-                  IntMap.update i (fun _ ->
-                    Some (`Candidates IntSet.(inter elt_set set |> diff set))) acc)
-            (IntSet.diff indx_set inds_set))
+         (fun i ->
+           IntMap.update i (fun _ -> Some (`Candidates elt_set)))
+         indx_set acc))
        mtrx
 
 let prune_exclusives mtrx =
@@ -111,7 +101,7 @@ let prune_exclusives mtrx =
   let col_start_f = Fun.id in
   let exclusives start_indx sec_inds_f =
     List.fold_right
-    (fun i acc -> prune_exclusives_in_sector acc (sec_inds_f i))
+    (fun i -> prune_exclusives_in_sector (sec_inds_f i))
     (List.init 9 start_indx) in
   exclusives row_start_f row_of_indx mtrx
       |> exclusives col_start_f col_of_indx
@@ -155,7 +145,7 @@ let lowest_candidate_count =
   `Uninitialized
 
 let rec plug_n_chug i mtrx candidates =
-  IntSet.min_elt_opt candidates >>= fun x ->
+  IntSet.choose_opt candidates >>= fun x ->
     let next_candidates = IntSet.remove x candidates in
     match solve (fill i x mtrx) with
     | None -> plug_n_chug i mtrx next_candidates
@@ -169,7 +159,7 @@ and solve mtrx =
 
 let parse str =
   let convert (i, x) =
-    if x = '.' then i, `Candidates (IntSet.of_list (List.init 9 (( + ) 1)))
+    if x = '.' then i, `Candidates (IntSet.of_list @@ List.init 9 (( + ) 1))
     else i, `Filled (int_of_string @@ Char.escaped x) in
   (String.to_seqi >> Seq.map convert >> IntMap.of_seq) str
 
