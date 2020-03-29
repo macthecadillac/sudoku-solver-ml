@@ -35,16 +35,18 @@ module EltSet = struct
   let remove elt t =
     if mem elt t then { len = t.len - 1; set = t.set - (1 lsl (elt - 1)) }
     else t
-  let to_seq t =
-    let rec aux i () =
-      if i > 9 then Seq.Nil
-      else if mem i t then Seq.Cons (i, aux (i + 1))
-      else aux (i + 1) () in
-    aux 1
+  let fold_left f acc t =
+    let rec aux i acc' =
+      if i > 9 then acc'
+      else if mem i t then aux (i + 1) (f acc' i)
+      else aux (i + 1) acc' in
+    aux 1 acc
   let choose t =
-    match to_seq t () with
-    | Seq.Nil -> None
-    | Seq.Cons (i, _) -> Some i
+    let rec aux i =
+      if i > 9 then None
+      else if mem i t then Some i
+      else aux (i + 1) in
+    aux 1
 end
 
 module IndexSet = struct
@@ -107,13 +109,13 @@ let filter_filled_cells mtrx =
 let list_exclusives =
   List.fold_left
   (fun acc (indx, elt_set) ->
-    Seq.fold_left
+    EltSet.fold_left
     (fun acc' elt ->
       IntMap.update elt
       Option.(fold ~none:IndexSet.empty ~some:Fun.id >> IndexSet.add indx >> some)
       acc')
     acc
-    (EltSet.to_seq elt_set))
+    elt_set)
   IntMap.empty
   >> IntMap.fold_left
      (fun acc elt indx_set ->
