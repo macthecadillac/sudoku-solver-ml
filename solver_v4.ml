@@ -1,11 +1,10 @@
 (* A solver that solves by pruning "exclusives" before prioritizing cells with
  * the least number of candidates *)
 
-module OrderedInt = struct
+module IMap = Map.Make (struct
   type t = int
   let compare = (-)
-end
-module IMap = Map.Make (OrderedInt)
+end)
 
 module IntMap = struct
   include IMap
@@ -13,14 +12,13 @@ module IntMap = struct
   let fold_left f acc m = fold (fun key a b -> f b key a) m acc
 
   let fold_while f acc m =
-    let rec aux seq_thunk accum =
-      match seq_thunk () with
-      | Seq.Nil -> accum
-      | Seq.Cons ((key, a), seq_thunk') ->
+    let rec aux accum = function
+      | [] -> accum
+      | (key, a)::l' ->
           match f accum key a with
           | accum', `Stop -> accum'
-          | accum', `Continue -> aux seq_thunk' accum'
-    in aux (to_seq m) acc
+          | accum', `Continue -> aux accum' l' in
+    aux acc (bindings m)
 end
 
 module EltSet = struct
@@ -73,7 +71,7 @@ module IndexSet = struct
     else (cmp snd)
 end
 
-module IntSetMap = Map.Make (IndexSet)
+module SetMap = Map.Make (IndexSet)
 
 let (>>=) = Option.bind
 let (>>) f g = fun x -> g (f x)  (* reverse composition *)
@@ -112,38 +110,37 @@ let list_exclusives =
     EltSet.fold_left
     (fun acc' elt ->
       IntMap.update elt
-      Option.(fold ~none:IndexSet.empty ~some:Fun.id >> IndexSet.add indx >> some)
+      Option.(value ~default:IndexSet.empty >> IndexSet.add indx >> some)
       acc')
     acc
     elt_set)
   IntMap.empty
   >> IntMap.fold_left
      (fun acc elt indx_set ->
-       IntSetMap.update indx_set
-       Option.(fold ~none:EltSet.empty ~some:Fun.id >> EltSet.add elt >> some)
+       SetMap.update indx_set
+       Option.(value ~default:EltSet.empty >> EltSet.add elt >> some)
        acc)
-     IntSetMap.empty
-  >> IntSetMap.to_seq
+     SetMap.empty
+  >> SetMap.to_seq
   >> Seq.filter (fun (is, es) -> IndexSet.cardinal is = EltSet.cardinal es)
 
-let prune_inds x mtrx inds =
-  let aux idx =
-    IntMap.update idx
-    (fun elt ->
-      elt >>= function
-        | `Filled _ -> elt
-        | `Candidates set -> Some (`Candidates (EltSet.remove x set))) in
-  List.fold_right aux inds mtrx
+let prune_cell x idx mtrx =
+  match IntMap.find idx mtrx with
+  | `Filled _ -> Some mtrx
+  | `Candidates set ->
+      let set' = EltSet.remove x set in
+      if EltSet.cardinal set' = 0 then None
+      else Some (IntMap.add idx (`Candidates set') mtrx)
 
-let prune_exclusives_in_sector inds mtrx =
+let prune_filled_by_index x mtrx =
+  List.fold_left (fun acc i -> acc >>= prune_cell x i) (Some mtrx)
+
+let prune_exclusives_by_index mtrx inds =
   filter_filled_cells mtrx inds
     |> list_exclusives
     |> Seq.fold_left
-       (fun acc (indx_set, (elt_set : EltSet.t)) ->
-         IndexSet.(fold
-         (fun i ->
-           IntMap.update i (fun _ -> Some (`Candidates elt_set)))
-         indx_set acc))
+       (fun acc (indx_set, elt_set) ->
+         IndexSet.fold (fun i -> IntMap.add i (`Candidates elt_set)) indx_set acc)
        mtrx
 
 let prune_exclusives mtrx =
@@ -151,48 +148,45 @@ let prune_exclusives mtrx =
   let col_start_f = Fun.id in
   let exclusives start_indx sec_inds_f =
     List.fold_right
-    (fun i -> prune_exclusives_in_sector (sec_inds_f i))
+    (fun i mtrx -> prune_exclusives_by_index mtrx (sec_inds_f i))
     (List.init 9 start_indx) in
   exclusives row_start_f row_of_indx mtrx
       |> exclusives col_start_f col_of_indx
       |> exclusives anchor_of_sec_indx sec_of_indx
 
 let prune_filled i x mtrx =
-  List.map (fun f -> f i) [row_of_indx; col_of_indx; sec_of_indx]
-    |> List.fold_left (prune_inds x) mtrx
+  let aux indf acc = prune_filled_by_index x acc (indf i) in
+  aux row_of_indx mtrx >>= fun x ->
+  aux col_of_indx x >>= fun y ->
+  aux sec_of_indx y
 
-let prune i x = prune_filled i x >> prune_exclusives
-
-let fill i x = IntMap.update i (fun _ -> Some (`Filled x)) >> prune i x
+let fill i x =
+  IntMap.add i (`Filled x) >> prune_filled i x >> Option.map prune_exclusives
 
 let initialize mtrx =
-  prune_exclusives
+  Option.map prune_exclusives
   @@ IntMap.fold
      (fun indx cell acc ->
+       acc >>= fun m ->
        match cell with
-       | `Filled n -> prune_filled indx n acc
+       | `Filled n -> prune_filled indx n m
        | _ -> acc)
-     mtrx mtrx
+     mtrx (Some mtrx)
 
-let lowest_candidate_count =
+let find_min_cell =
   IntMap.fold_while
   (fun acc i cell ->
     match cell with
     | `Filled _ -> acc, `Continue
     | `Candidates candidates ->
-        match acc with
-        | `NoCandidate -> assert false
-        | `Uninitialized ->
-            let cnt = EltSet.cardinal candidates in
-            if cnt = 1 then `LowestCount (i, cnt, candidates), `Stop
-            else `LowestCount (i, cnt, candidates), `Continue
-        | `LowestCount (_, cnt', _) ->
-            let cnt = EltSet.cardinal candidates in
-            if cnt = 0 then `NoCandidate, `Stop
-            else if cnt = 1 then `LowestCount (i, cnt, candidates), `Stop
-            else if cnt <= cnt' then `LowestCount (i, cnt, candidates), `Continue
-            else acc, `Continue)
-  `Uninitialized
+        let n = EltSet.cardinal candidates in
+        if n = 1 then Some (i, n, candidates), `Stop
+        else
+          match acc with
+          | None -> Some (i, n, candidates), `Continue
+          | Some (_, n', _) when n <= n' -> Some (i, n, candidates), `Continue
+          | _ -> acc, `Continue)
+  None
 
 let rec plug_n_chug i mtrx candidates =
   EltSet.choose candidates >>= fun x ->
@@ -202,10 +196,8 @@ let rec plug_n_chug i mtrx candidates =
     | s -> s
 
 and solve mtrx =
-  match lowest_candidate_count mtrx with
-  | `NoCandidate -> None
-  | `Uninitialized -> Some mtrx
-  | `LowestCount (i, _, candidates) -> plug_n_chug i mtrx candidates
+  mtrx >>= fun m ->
+  Option.fold ~none:mtrx ~some:(fun (i, _, cs) -> plug_n_chug i m cs) (find_min_cell m)
 
 let parse str =
   let convert (i, x) =
